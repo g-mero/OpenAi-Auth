@@ -1,4 +1,4 @@
-module github/g-mero/openai-auth
+module github.com/g-mero/openai-auth
 
 go 1.20
 
