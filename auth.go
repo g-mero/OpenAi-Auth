@@ -1,7 +1,6 @@
 package openai_auth
 
 import (
-	"fmt"
 	"github.com/imroc/req/v3"
 	"github.com/tidwall/gjson"
 	"strconv"
@@ -28,8 +27,8 @@ func NewError(location string, statusCode int, details string, err error) *Error
 type Authenticator struct {
 	email         string
 	password      string
-	accessToken   string
-	expireAt      int64 // UTC unix Seconds
+	AccessToken   string
+	ExpireAt      int64 // UTC unix Seconds
 	refreshToken  string
 	codeVerifier  string
 	codeChallenge string
@@ -40,9 +39,9 @@ func NewAuth(email, password string) *Authenticator {
 	auth := &Authenticator{
 		email:         email,
 		password:      password,
-		accessToken:   "",
+		AccessToken:   "",
 		refreshToken:  "",
-		expireAt:      0,
+		ExpireAt:      0,
 		codeVerifier:  "3Pujyh3iJ_6DKq4uPm86mBFnaeE-iEhmXzWtgmPOqgs",
 		codeChallenge: "XMAIUK-Q1VqXJ6lmIeT0imDkzeVKD_ask1VNO7V4dE0",
 	}
@@ -57,6 +56,7 @@ func NewAuth(email, password string) *Authenticator {
 	return auth
 }
 
+// Auth this will fire the auth process
 func (that *Authenticator) Auth() *Error {
 	preAuth, err := getPreAuthCode()
 	if err != nil {
@@ -159,7 +159,6 @@ func (that *Authenticator) part5(url, ref string) *Error {
 		location, err := resp.Location()
 
 		if err != nil || !strings.Contains(location.String(), "com.openai.chat://auth0.openai.com/ios/com.openai.chat/callback") {
-			fmt.Println(location.Path)
 			return NewError("part5", 500, "failed check location", nil)
 		}
 		// 获取code
@@ -196,17 +195,13 @@ func (that *Authenticator) getToken(code string) *Error {
 
 		if accessToken.Exists() && refreshToken.Exists() && expireIn.Exists() {
 			that.refreshToken = refreshToken.String()
-			that.accessToken = accessToken.String()
-			// 提前5分钟
-			that.expireAt = time.Now().Unix() + expireIn.Int() - 5*60
+			that.AccessToken = accessToken.String()
+			// 5 minutes earlier
+			that.ExpireAt = time.Now().Unix() + expireIn.Int() - 5*60
 
 			return nil
 		}
 	}
 
 	return NewError("getToken", resp.StatusCode, "response data get failed", nil)
-}
-
-func (that *Authenticator) GetAccessToken() string {
-	return that.accessToken
 }

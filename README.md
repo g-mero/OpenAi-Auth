@@ -14,8 +14,11 @@ import "github.com/g-mero/openai-auth"
 
 auth := openai-auth.NewAuth("yourEmail", "yourPassword")
 
+// fire auth process, make sure no error occurred
 if auth.Auth() == nil {
-    fmt.Println(auth.GetAccessToken())
+	// if there is no error occurred, you can get your accessToken 
+	// or expire time
+    fmt.Println(auth.AccessToken, auth.ExpireAt)
 }
 ```
 
