@@ -1,28 +1,13 @@
 package openai_auth
 
 import (
+	"errors"
 	"github.com/imroc/req/v3"
 	"github.com/tidwall/gjson"
 	"strconv"
 	"strings"
 	"time"
 )
-
-type Error struct {
-	Location   string
-	StatusCode int
-	Details    string
-	Error      error
-}
-
-func NewError(location string, statusCode int, details string, err error) *Error {
-	return &Error{
-		Location:   location,
-		StatusCode: statusCode,
-		Details:    details,
-		Error:      err,
-	}
-}
 
 type Authenticator struct {
 	email         string
@@ -49,7 +34,7 @@ func NewAuth(email, password string) *Authenticator {
 	client := req.C().
 		SetUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" +
 			" AppleWebKit/537.36 (KHTML, like Gecko) " + "Chrome/109.0.0.0 Safari/537.36").
-		SetRedirectPolicy(req.NoRedirectPolicy()).DevMode()
+		SetRedirectPolicy(req.NoRedirectPolicy())
 
 	auth.client = client
 
@@ -57,17 +42,16 @@ func NewAuth(email, password string) *Authenticator {
 }
 
 // Auth this will fire the auth process
-func (that *Authenticator) Auth() *Error {
+func (that *Authenticator) Auth() error {
 	preAuth, err := getPreAuthCode()
 	if err != nil {
-		return NewError("part1", 500,
-			"error when try to get pre_auth", err)
+		return errors.New("error at part1：" + err.Error())
 	}
 
 	return that.part2(preAuth)
 }
 
-func (that *Authenticator) part2(preAuth string) *Error {
+func (that *Authenticator) part2(preAuth string) error {
 	url := "https://auth0.openai.com/authorize?client_id=pdlLIX2Y72MIl2rhLhTE9VV9bN905kBh&audience=https%3A%2F" +
 		"%2Fapi.openai.com%2Fv1&redirect_uri=com.openai.chat%3A%2F%2Fauth0.openai.com%2Fios%2Fcom.openai.chat" +
 		"%2Fcallback&scope=openid%20email%20profile%20offline_access%20model.request%20model.read" +
@@ -76,23 +60,23 @@ func (that *Authenticator) part2(preAuth string) *Error {
 
 	resp, err := that.client.R().SetHeader("Referer", "https://ios.chat.openai.com/").Get(url)
 	if err != nil {
-		return NewError("part2", 500, "error when send requeset to login url", err)
+		return errors.New("part2: error when send request to login url")
 	}
 
 	if resp.IsErrorState() {
-		return NewError("part2", resp.StatusCode, "error when send requeset to login url", nil)
+		return errors.New("part2: error response: " + resp.Status)
 	}
 
 	// 获取跳转到的地址
 	location, err := resp.Location()
 	if err != nil {
-		return NewError("part2", 500, "error when send get redirect url", err)
+		return errors.New("part2: location error" + err.Error())
 	}
 
 	return that.part3(location.Query().Get("state"))
 }
 
-func (that *Authenticator) part3(state string) *Error {
+func (that *Authenticator) part3(state string) error {
 	url := "https://auth0.openai.com/u/login/identifier?state=" + state
 	data := `{
             "state": ` + strconv.Quote(state) + `,
@@ -107,17 +91,17 @@ func (that *Authenticator) part3(state string) *Error {
 	resp, err := that.client.R().SetHeaders(map[string]string{"Referer": url, "Origin": "https://auth0.openai.com"}).
 		SetBodyJsonString(data).Post(url)
 	if err != nil {
-		return NewError("part3", 500, "error when send request to identifier", err)
+		return errors.New("part3: error when send request to identifier")
 	}
 
 	if resp.StatusCode == 302 {
 		return that.part4(state)
 	}
 
-	return NewError("part3", resp.StatusCode, resp.Status, nil)
+	return errors.New("part3: error " + resp.Status)
 }
 
-func (that *Authenticator) part4(state string) *Error {
+func (that *Authenticator) part4(state string) error {
 	url := "https://auth0.openai.com/u/login/password?state=" + state
 	data := `{
             "state": ` + strconv.Quote(state) + `,
@@ -130,49 +114,49 @@ func (that *Authenticator) part4(state string) *Error {
 		SetBodyJsonString(data).Post(url)
 
 	if err != nil {
-		return NewError("part4", 500, "error when send request to password", err)
+		return errors.New("part4: error to request")
 	}
 
 	if resp.StatusCode == 400 {
-		return NewError("part4", 400, "wrong email or password", nil)
+		return errors.New("part4: wrong email or password")
 	}
 
 	if resp.StatusCode == 302 {
 		location, err := resp.Location()
 		if err != nil || !strings.Contains(location.Path, "/authorize/resume") {
-			return NewError("part4", 500, "Login Fail", nil)
+			return errors.New("part4 Login Fail")
 		}
 		return that.part5(location.String(), url)
 	}
 
-	return NewError("part4", 500, "Error Login", nil)
+	return errors.New("part4 Login Fail")
 }
 
-func (that *Authenticator) part5(url, ref string) *Error {
+func (that *Authenticator) part5(url, ref string) error {
 	resp, err := that.client.R().SetHeader("Referer", ref).Get(url)
 
 	if err != nil {
-		return NewError("part5", 500, "request failed", err)
+		return errors.New("part5: error to request")
 	}
 
 	if resp.StatusCode == 302 {
 		location, err := resp.Location()
 
 		if err != nil || !strings.Contains(location.String(), "com.openai.chat://auth0.openai.com/ios/com.openai.chat/callback") {
-			return NewError("part5", 500, "failed check location", nil)
+			return errors.New("part5: failed check location")
 		}
 		// 获取code
 		code := location.Query().Get("code")
 		if code == "" {
-			return NewError("part5", 500, "failed get code", nil)
+			return errors.New("part5: failed get code")
 		}
 		return that.getToken(code)
 	}
 
-	return NewError("part5", 500, "failed Login", nil)
+	return errors.New("part5: failed login")
 }
 
-func (that *Authenticator) getToken(code string) *Error {
+func (that *Authenticator) getToken(code string) error {
 	url := "https://auth0.openai.com/oauth/token"
 
 	data := `{
@@ -185,7 +169,7 @@ func (that *Authenticator) getToken(code string) *Error {
 
 	resp, err := that.client.R().SetBodyJsonString(data).Post(url)
 	if err != nil {
-		return NewError("getToken", 500, "failed request", nil)
+		return errors.New("getToken: error to request")
 	}
 
 	if resp.IsSuccessState() {
@@ -203,5 +187,44 @@ func (that *Authenticator) getToken(code string) *Error {
 		}
 	}
 
-	return NewError("getToken", resp.StatusCode, "response data get failed", nil)
+	return errors.New("getToken: response data get failed")
+}
+
+// GetRefreshToken do not expose your refreshToken, it's dangerous!
+func (that *Authenticator) GetRefreshToken() string {
+	return that.refreshToken
+}
+
+// RenewAccessTokenByRefreshToken get accessToken by refreshToken
+func RenewAccessTokenByRefreshToken(refreshToken string) (string, error) {
+	url := "https://auth0.openai.com/oauth/token"
+
+	client := req.C().
+		SetUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" +
+			" AppleWebKit/537.36 (KHTML, like Gecko) " + "Chrome/109.0.0.0 Safari/537.36").
+		SetRedirectPolicy(req.NoRedirectPolicy())
+
+	data := `{
+		"redirect_uri": "com.openai.chat://auth0.openai.com/ios/com.openai.chat/callback",
+		"grant_type": "refresh_token",
+		"client_id": "pdlLIX2Y72MIl2rhLhTE9VV9bN905kBh",
+		"refresh_token": ` + strconv.Quote(refreshToken) + `
+	}`
+
+	resp, err := client.R().SetBodyJsonString(data).Post(url)
+	if err != nil {
+		return "", errors.New("error send refresh token request")
+	}
+
+	if resp.IsSuccessState() {
+		token := gjson.Get(resp.String(), "access_token")
+
+		if !token.Exists() {
+			return "", errors.New("bad json")
+		}
+		return token.String(), nil
+	}
+
+	return "", errors.New("error request: " + resp.Status)
+
 }
